@@ -1,113 +1,89 @@
+/******************************************************************
+*                                                                 *
+*  VersionHelpers.h -- This module defines helper functions to    *
+*                      promote version check with proper          *
+*                      comparisons.                               *
+*                                                                 *
+*  Copyright (c) Microsoft Corp.  All rights reserved.            *
+*                                                                 *
+******************************************************************/
+#ifndef _versionhelpers_H_INCLUDED_
+#define _versionhelpers_H_INCLUDED_
+
+#ifndef XP_BUILD
+#include <winapifamily.h>
+#else
+#define WINAPI_PARTITION_DESKTOP   (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP)
+#define WINAPI_FAMILY WINAPI_FAMILY_DESKTOP_APP
+#define WINAPI_FAMILY_PARTITION(Partitions)     (Partitions)
+
+#define _WIN32_WINNT_NT4                    0x0400
+#define _WIN32_WINNT_WIN2K                  0x0500
+#define _WIN32_WINNT_WINXP                  0x0501
+#define _WIN32_WINNT_WS03                   0x0502
+#define _WIN32_WINNT_WIN6                   0x0600
+#define _WIN32_WINNT_VISTA                  0x0600
+#define _WIN32_WINNT_WS08                   0x0600
+#define _WIN32_WINNT_LONGHORN               0x0600
+#define _WIN32_WINNT_WIN7                   0x0601
+#define _WIN32_WINNT_WIN8                   0x0602
+#endif
+
+#ifdef _MSC_VER
 #pragma once
+#endif  // _MSC_VER
+
+#pragma region Application Family
+
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+
+#include <specstrings.h>    // for _In_, etc.
+
+#if !defined(__midl) && !defined(SORTPP_PASS)
+
+#if (NTDDI_VERSION >= NTDDI_WINXP)
+
+#ifdef __cplusplus
 
 #define VERSIONHELPERAPI inline bool
 
-#define _WIN32_WINNT_NT4            0x0400
-#define _WIN32_WINNT_WIN2K          0x0500
-#define _WIN32_WINNT_WINXP          0x0501
-#define _WIN32_WINNT_WS03           0x0502
-#define _WIN32_WINNT_WIN6           0x0600
-#define _WIN32_WINNT_VISTA          0x0600
-#define _WIN32_WINNT_WS08           0x0600
-#define _WIN32_WINNT_LONGHORN       0x0600
-#define _WIN32_WINNT_WIN7           0x0601
-#define _WIN32_WINNT_WIN8           0x0602
-#define _WIN32_WINNT_WINBLUE        0x0603
-#define _WIN32_WINNT_WIN10          0x0A00        
+#else  // __cplusplus
 
-typedef NTSTATUS( NTAPI* fnRtlGetVersion )(PRTL_OSVERSIONINFOEXW lpVersionInformation);
+#define VERSIONHELPERAPI FORCEINLINE BOOL
 
-enum eVerShort
-{
-    WinUnsupported, // Unsupported OS 
-    WinXP,          // Windows XP
-    Win7,           // Windows 7
-    Win8,           // Windows 8
-    Win8Point1,     // Windows 8.1
-    Win10,          // Windows 10
-    Win10AU,        // Windows 10 Anniversary update
-    Win10CU         // Windows 10 Creators update
-};
+#endif // __cplusplus
 
-struct WinVersion
-{
-    eVerShort ver = WinUnsupported;
-    RTL_OSVERSIONINFOEXW native;
-};
+#define _WIN32_WINNT_WINBLUE                0x0603
+#define _WIN32_WINNT_WIN10                  0x0A00
 
-inline WinVersion& WinVer()
-{
-    static WinVersion g_WinVer;
-    return g_WinVer;
-}
-
-inline void InitVersion()
-{
-    auto& g_WinVer = WinVer();
-    g_WinVer.native.dwOSVersionInfoSize = sizeof( g_WinVer.native );
-    auto RtlGetVersion = (fnRtlGetVersion)GetProcAddress( GetModuleHandleW( L"ntdll.dll" ), "RtlGetVersion" );
-    if (RtlGetVersion)
-        RtlGetVersion( &g_WinVer.native );
-
-    if (g_WinVer.native.dwMajorVersion != 0)
-    {
-        auto fullver = (g_WinVer.native.dwMajorVersion << 8) | g_WinVer.native.dwMinorVersion;
-        switch (fullver)
-        {
-        case _WIN32_WINNT_WIN10:
-            if (g_WinVer.native.dwBuildNumber >= 15063)
-                g_WinVer.ver = Win10CU;
-            else if (g_WinVer.native.dwBuildNumber >= 14393)
-                g_WinVer.ver = Win10AU;
-            else if (g_WinVer.native.dwBuildNumber >= 10586)
-                g_WinVer.ver = Win10;
-            break;
-
-        case _WIN32_WINNT_WINBLUE:
-            g_WinVer.ver = Win8Point1;
-            break;
-
-        case _WIN32_WINNT_WIN8:
-            g_WinVer.ver = Win8;
-            break;
-
-        case _WIN32_WINNT_WIN7:
-            g_WinVer.ver = Win7;
-            break;
-
-        case _WIN32_WINNT_WINXP:
-            g_WinVer.ver = WinXP;
-            break;
-
-        default:
-            g_WinVer.ver = WinUnsupported;
-        }
-    }
-}
-
+typedef NTSTATUS( NTAPI* fnRtlGetVersion )(PRTL_OSVERSIONINFOW lpVersionInformation);
 
 VERSIONHELPERAPI
 IsWindowsVersionOrGreater( WORD wMajorVersion, WORD wMinorVersion, WORD wServicePackMajor, DWORD dwBuild )
 {
-    auto& g_WinVer = WinVer();
-    if (g_WinVer.native.dwMajorVersion != 0)
+    RTL_OSVERSIONINFOEXW verInfo = { 0 };
+    verInfo.dwOSVersionInfoSize = sizeof( verInfo );
+
+    static auto RtlGetVersion = (fnRtlGetVersion)GetProcAddress( GetModuleHandleW( L"ntdll.dll" ), "RtlGetVersion" );
+
+    if (RtlGetVersion != 0 && RtlGetVersion( (PRTL_OSVERSIONINFOW)&verInfo ) == 0)
     {
-        if (g_WinVer.native.dwMajorVersion > wMajorVersion)
+        if (verInfo.dwMajorVersion > wMajorVersion)
             return true;
-        else if (g_WinVer.native.dwMajorVersion < wMajorVersion)
+        else if (verInfo.dwMajorVersion < wMajorVersion)
             return false;
 
-        if (g_WinVer.native.dwMinorVersion > wMinorVersion)
+        if (verInfo.dwMinorVersion > wMinorVersion)
             return true;
-        else if (g_WinVer.native.dwMinorVersion < wMinorVersion)
+        else if (verInfo.dwMinorVersion < wMinorVersion)
             return false;
 
-		if (g_WinVer.native.wServicePackMajor > wServicePackMajor)
+        if (verInfo.wServicePackMajor > wServicePackMajor)
             return true;
-        else if (g_WinVer.native.wServicePackMajor < wServicePackMajor)
+        else if (verInfo.wServicePackMajor < wServicePackMajor)
             return false;
 
-        if (g_WinVer.native.dwBuildNumber >= dwBuild)
+        if (verInfo.dwBuildNumber >= dwBuild)
             return true;
     }
 
@@ -207,3 +183,12 @@ IsWindowsServer()
     return !VerifyVersionInfoW( &osvi, VER_PRODUCT_TYPE, dwlConditionMask );
 }
 
+#endif // NTDDI_VERSION
+
+#endif // defined(__midl)
+
+#endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) */
+
+#pragma endregion
+
+#endif // _VERSIONHELPERS_H_INCLUDED_

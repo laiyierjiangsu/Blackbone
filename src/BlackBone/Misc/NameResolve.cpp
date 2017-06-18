@@ -3,7 +3,6 @@
 #include "../Include/Macro.h"
 #include "../Misc/Utils.h"
 #include "../Misc/DynImport.h"
-#include "../Process/Process.h"
 
 #include <stdint.h>
 #include <algorithm>
@@ -72,15 +71,15 @@ bool blackbone::NameResolve::InitializeP()
         wchar_t dllName[MAX_PATH] = { 0 };
 
         pSetMap->apiName( pDescriptor, dllName );
-        std::transform( dllName, dllName + MAX_PATH, dllName, ::towlower );
+        std::transform( dllName, dllName + MAX_PATH, dllName, ::tolower );
 
         T3 pHostData = pSetMap->valArray( pDescriptor );
 
         for (DWORD j = 0; j < pHostData->Count; j++)
         { 
             T4 pHost = pHostData->entry( pSetMap, j );
-            std::wstring hostName( reinterpret_cast<wchar_t*>(reinterpret_cast<uint8_t*>(pSetMap) + pHost->ValueOffset), 
-                pHost->ValueLength / sizeof( wchar_t ) );
+            std::wstring hostName( reinterpret_cast<wchar_t*>(reinterpret_cast<uint8_t*>(pSetMap)+pHost->ValueOffset),
+                                   pHost->ValueLength / sizeof(wchar_t) );
 
             if (!hostName.empty())
                 vhosts.push_back( hostName );
@@ -107,16 +106,14 @@ NTSTATUS NameResolve::ResolvePath(
     const std::wstring& baseName,
     const std::wstring& searchDir,
     eResolveFlag flags, 
-    Process& proc,
+    DWORD procID, 
     HANDLE actx /*= INVALID_HANDLE_VALUE*/ 
     )
 {
-    NTSTATUS status = STATUS_SUCCESS;
     wchar_t tmpPath[4096] = { 0 };
     std::wstring completePath;
 
-    //std::transform( path.begin(), path.end(), path.begin(), ::towlower );
-    path = Utils::ToLower( path );
+    std::transform( path.begin(), path.end(), path.begin(), ::tolower );
 
     // Leave only file name
     std::wstring filename = Utils::StripPath( path );
@@ -134,41 +131,36 @@ NTSTATUS NameResolve::ResolvePath(
     if (iter != _apiSchema.end())
     {
         // Select appropriate api host
-        if (!iter->second.empty())
-            path = iter->second.front() != baseName ? iter->second.front() : iter->second.back();
-        else
-            path = baseName;
+        path = iter->second.front() != baseName ? iter->second.front() : iter->second.back();
 
-        status = ProbeSxSRedirect( path, proc, actx );
-        if (NT_SUCCESS( status ) || status == STATUS_SXS_IDENTITIES_DIFFERENT)
+        if (ProbeSxSRedirect( path, actx ) == STATUS_SUCCESS)
         {
-            return status;
+            return STATUS_SUCCESS;
         }
         else if (flags & EnsureFullPath)
         {
             wchar_t sys_path[255] = { 0 };
             GetSystemDirectoryW( sys_path, 255 );
 
-            path = std::wstring( sys_path ) + L"\\" + path;
+            path = sys_path + path;
         }
         
-        return STATUS_SUCCESS;
+        return LastNtStatus( STATUS_SUCCESS );
     }
 
     if (flags & ApiSchemaOnly)
-        return STATUS_NOT_FOUND;
+        return LastNtStatus( STATUS_NOT_FOUND );
 
     // SxS redirection
-    status = ProbeSxSRedirect( path, proc, actx );
-    if (NT_SUCCESS( status ) || status == STATUS_SXS_IDENTITIES_DIFFERENT)
-        return status;
+    if (ProbeSxSRedirect( path, actx ) == STATUS_SUCCESS)
+        return LastNtStatus( STATUS_SUCCESS );
 
     if (flags & NoSearch)
-        return STATUS_NOT_FOUND;
+        return LastNtStatus( STATUS_NOT_FOUND );
 
     // Already a full-qualified name
     if (Utils::FileExists( path ))
-        return STATUS_SUCCESS;
+        return LastNtStatus( STATUS_SUCCESS );
 
     //
     // Perform search accordingly to Windows Image loader search order 
@@ -196,10 +188,7 @@ NTSTATUS NameResolve::ResolvePath(
                 dwSize = 255;
 
                 // In Win10 DllDirectory value got screwed, so less reliable method is used
-                if (flags & Wow64)
-                    GetSystemWow64DirectoryW( sys_path, dwSize );
-                else
-                    GetSystemDirectoryW( sys_path, dwSize );
+                GetSystemDirectoryW( sys_path, dwSize );
 
                 if (res == ERROR_SUCCESS)
                 {
@@ -231,7 +220,7 @@ NTSTATUS NameResolve::ResolvePath(
     //
     // 3. The directory from which the application was started.
     //
-    completePath = GetProcessDirectory( proc.core().pid() ) + L"\\" + filename;
+    completePath = GetProcessDirectory( procID ) + L"\\" + filename;
 
     if (Utils::FileExists( completePath ))
     {
@@ -242,10 +231,7 @@ NTSTATUS NameResolve::ResolvePath(
     //
     // 4. The system directory
     //
-    if (flags & Wow64)
-        GetSystemWow64DirectoryW( tmpPath, ARRAYSIZE( tmpPath ) );
-    else
-        GetSystemDirectoryW( tmpPath, ARRAYSIZE( tmpPath ) );
+    GetSystemDirectoryW( tmpPath, ARRAYSIZE( tmpPath ) );
 
     completePath = std::wstring( tmpPath ) + L"\\" + filename;
 
@@ -298,7 +284,7 @@ NTSTATUS NameResolve::ResolvePath(
         }
     }
 
-    return STATUS_NOT_FOUND;
+    return LastNtStatus( STATUS_NOT_FOUND );
 }
 
 
@@ -306,10 +292,9 @@ NTSTATUS NameResolve::ResolvePath(
 /// Try SxS redirection
 /// </summary>
 /// <param name="path">Image path.</param>
-/// <param name="proc">Process. Used to search process executable directory</param>
 /// <param name="actx">Activation context</param>
 /// <returns></returns>
-NTSTATUS NameResolve::ProbeSxSRedirect( std::wstring& path, Process& proc, HANDLE actx /*= INVALID_HANDLE_VALUE*/ )
+NTSTATUS NameResolve::ProbeSxSRedirect( std::wstring& path, HANDLE actx /*= INVALID_HANDLE_VALUE*/ )
 {
     UNICODE_STRING OriginalName = { 0 };
     UNICODE_STRING DllName1 = { 0 };
@@ -344,11 +329,7 @@ NTSTATUS NameResolve::ProbeSxSRedirect( std::wstring& path, Process& proc, HANDL
 
     if (status == STATUS_SUCCESS)
     {
-        // Arch mismatch, local SxS redirection is incorrect
-        if (proc.barrier().mismatch)
-            return STATUS_SXS_IDENTITIES_DIFFERENT;
-        else
-            path = pPath->Buffer;
+        path = pPath->Buffer;
     }
     else
     {
@@ -356,7 +337,7 @@ NTSTATUS NameResolve::ProbeSxSRedirect( std::wstring& path, Process& proc, HANDL
             SAFE_CALL( RtlFreeUnicodeString, &DllName2);
     }
 
-    return status;
+    return LastNtStatus( status );
 }
 
 /// <summary>

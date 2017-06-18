@@ -21,15 +21,14 @@ NTSTATUS RemoteLocalHook::AllocateMem( ptr_t /*address*/, size_t codeSize )
     auto pagesize = _process.core().native()->pageSize();
     auto size = Align( codeSize, pagesize ) + Align( sizeof( _ctx ), pagesize );
 
-    auto allocation = _process.memory().Allocate( size, PAGE_EXECUTE_READWRITE );
-    if (!allocation)
-        return allocation.status;
+    _hookData = _process.memory().Allocate( size, PAGE_EXECUTE_READWRITE );
+    if (!_hookData.valid())
+        return LastNtStatus();
 
-    _hookData   = std::move( allocation.result() );
     _pHookCode  = _hookData.ptr();
     _pThunkCode = _pHookCode + _hookData.size() - pagesize;
 
-    return allocation.status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS RemoteLocalHook::SetHook( ptr_t address, asmjit::Assembler& hook )
@@ -146,7 +145,7 @@ bool RemoteLocalHook::CopyOldCode( ptr_t address, bool x64 )
             }
             else
             {
-                //diff += src - old;
+                diff += src - old;
                 memcpy( src + ofst, &diff, sz );
             }
         }
@@ -163,7 +162,7 @@ bool RemoteLocalHook::CopyOldCode( ptr_t address, bool x64 )
         _ctx.hook32.jmp_size = 5;
         _ctx.hook32.codeSize = all_len;
         *src = 0xE9;
-        //*(int32_t*)(src + 1) = (int32_t)address + all_len - (int32_t)old - 5;
+        *(int32_t*)(src + 1) = (int32_t)address + all_len - (int32_t)old - 5;
         return true;
     }
 

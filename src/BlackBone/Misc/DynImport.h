@@ -60,7 +60,7 @@ public:
     /// <param name="...args">Function args</param>
     /// <returns>Function result or 0 if import not found</returns>
     template<typename T, typename... Args>
-    inline auto safeCall( const std::string& name, Args&&... args )
+    inline auto safeCall( const std::string& name, Args&&... args ) -> typename std::result_of<T(Args...)>::type
     {
         auto pfn = DynImport::get<T>( name );
         return pfn ? pfn( std::forward<Args>( args )... ) : (std::result_of<T( Args... )>::type)(0);
@@ -72,11 +72,7 @@ public:
     /// <param name="name">Function name</param>
     /// <param name="module">Module name</param>
     /// <returns>true on success</returns>
-    BLACKBONE_API FARPROC load( const std::string& name, const std::wstring& module )
-    {
-        auto mod = GetModuleHandleW( module.c_str() );
-        return load( name, mod );
-    }
+    BLACKBONE_API FARPROC load( const std::string& name, const std::wstring& module );
 
     /// <summary>
     /// Load function into database
@@ -84,19 +80,7 @@ public:
     /// <param name="name">Function name</param>
     /// <param name="hMod">Module base</param>
     /// <returns>true on success</returns>
-    BLACKBONE_API FARPROC load( const std::string& name, HMODULE hMod )
-    {
-        CSLock lck( _mapGuard );
-
-        auto proc = GetProcAddress( hMod, name.c_str() );
-        if (proc)
-        {
-            _funcs.insert( std::make_pair( name, proc ) );
-            return proc;
-        }
-
-        return nullptr;
-    }
+    BLACKBONE_API FARPROC load( const std::string& name, HMODULE hMod );
 
 private:
     DynImport() = default;

@@ -3,9 +3,7 @@
 #include "../../Config.h"
 #include "../../Include/Winheaders.h"
 #include "../../Include/NativeStructures.h"
-#include "../../Include/CallResult.h"
 #include "../../Include/Types.h"
-#include "../../Misc/Utils.h"
 
 #include <memory>
 
@@ -95,6 +93,7 @@ class Thread
 public:
     BLACKBONE_API Thread( DWORD id, class ProcessCore* hProcess, DWORD access = DEFAULT_ACCESS_T );
     BLACKBONE_API Thread( HANDLE handle, class ProcessCore* hProcess );
+    BLACKBONE_API Thread( const Thread& other );
     BLACKBONE_API ~Thread();
 
     /// <summary>
@@ -171,8 +170,8 @@ public:
     /// <param name="ctx">Returned context</param>
     /// <param name="flags">Context flags.</param>
     /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS GetContext( _CONTEXT32& ctx, DWORD flags = CONTEXT_ALL, bool dontSuspend = false );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool GetContext( _CONTEXT32& ctx, DWORD flags = CONTEXT_ALL, bool dontSuspend = false );
 
     /// <summary>
     /// Get native thread context
@@ -180,31 +179,31 @@ public:
     /// <param name="ctx">Returned context</param>
     /// <param name="flags">Context flags.</param>
     /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS GetContext( _CONTEXT64& ctx, DWORD flags = CONTEXT64_ALL, bool dontSuspend = false );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool GetContext( _CONTEXT64& ctx, DWORD flags = CONTEXT64_ALL, bool dontSuspend = false );
 
     /// <summary>
     /// Set WOW64 thread context
     /// </summary>
     /// <param name="ctx">Context to set</param>
     /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS SetContext( _CONTEXT32& ctx, bool dontSuspend = false );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool SetContext( _CONTEXT32& ctx, bool dontSuspend = false );
 
     /// <summary>
     /// Set native thread context
     /// </summary>
     /// <param name="ctx">Context to set</param>
     /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS SetContext( _CONTEXT64& ctx, bool dontSuspend = false );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool SetContext( _CONTEXT64& ctx, bool dontSuspend = false );
 
     /// <summary>
     /// Terminate thread
     /// </summary>
     /// <param name="code">Exit code</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS Terminate( DWORD code = 0 );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool Terminate( DWORD code = 0 );
 
     /// <summary>
     /// Join thread
@@ -226,33 +225,42 @@ public:
     /// <param name="type">Breakpoint type(read/write/execute)</param>
     /// <param name="length">Number of bytes to include into breakpoint</param>
     /// <returns>Index of used breakpoint; -1 if failed</returns>
-    BLACKBONE_API call_result_t<int> AddHWBP( ptr_t addr, HWBPType type, HWBPLength length );
+    BLACKBONE_API int AddHWBP( ptr_t addr, HWBPType type, HWBPLength length );
 
     /// <summary>
     /// Remove existing hardware breakpoint
     /// </summary>
     /// <param name="idx">Breakpoint index</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS RemoveHWBP( int idx );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool RemoveHWBP( int idx );
 
     /// <summary>
     /// Remove existing hardware breakpoint
     /// </summary>
     /// <param name="ptr">Breakpoint address</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS RemoveHWBP( ptr_t ptr );
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool RemoveHWBP( ptr_t ptr );
 
     /// <summary>
     /// Close handle
     /// </summary>
     BLACKBONE_API void Close();
 
-    BLACKBONE_API inline bool operator ==( const Thread& other ) { return (_id == other._id); }
+    BLACKBONE_API inline bool operator ==(const Thread& other) { return (_id == other._id); }
+
+    BLACKBONE_API Thread& operator =(const Thread& other)
+    {
+        _id = other._id;
+        _core = other._core;
+        _handle = other._handle;
+
+        // Transfer handle ownership
+        other._owner = false;
+
+        return *this;
+    }
 
 private:
-    Thread( const Thread& ) = delete;
-    Thread& operator =( const Thread& ) = delete;
-
     /// <summary>
     /// GetThreadId support for XP
     /// </summary>
@@ -265,8 +273,7 @@ private:
 
     DWORD _id = 0;                      // Thread ID
     HANDLE _handle = NULL;              // Thread handle
+    mutable bool _owner = true;         // Class owns a handle
 };
-
-typedef std::shared_ptr<Thread> ThreadPtr;
 
 }

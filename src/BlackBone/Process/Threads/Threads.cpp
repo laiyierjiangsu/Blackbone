@@ -25,27 +25,20 @@ ProcessThreads::~ProcessThreads()
 /// <param name="arg">Thread argument.</param>
 /// <param name="flags">Thread creation flags</param>
 /// <returns>New thread object</returns>
-call_result_t<ThreadPtr> ProcessThreads::CreateNew( ptr_t threadProc, ptr_t arg, enum CreateThreadFlags flags /*= NoThreadFlags*/ )
+Thread ProcessThreads::CreateNew( ptr_t threadProc, ptr_t arg, enum CreateThreadFlags flags /*= NoThreadFlags*/ )
 {
     HANDLE hThd = NULL;
-    auto status = _core.native()->CreateRemoteThreadT( hThd, threadProc, arg, flags, THREAD_ALL_ACCESS );
-    if (!NT_SUCCESS( status ))
+    if (!NT_SUCCESS( _core.native()->CreateRemoteThreadT( hThd, threadProc, arg, flags, THREAD_ALL_ACCESS ) ))
     {
         // Ensure full thread access
-        status = _core.native()->CreateRemoteThreadT( hThd, threadProc, arg, flags, THREAD_QUERY_LIMITED_INFORMATION );
-        if (NT_SUCCESS( status ))
+        if (NT_SUCCESS( _core.native()->CreateRemoteThreadT( hThd, threadProc, arg, flags, THREAD_QUERY_LIMITED_INFORMATION ) ))
         {
             if (Driver().loaded())
-                status = Driver().PromoteHandle( GetCurrentProcessId(), hThd, THREAD_ALL_ACCESS );
+                Driver().PromoteHandle( GetCurrentProcessId(), hThd, THREAD_ALL_ACCESS );
         }
     }
 
-    if (!NT_SUCCESS( status ))
-        return status;
-
-    CSLock lg( _lock );
-    _threads.emplace_back( new Thread( hThd, &_core ) );
-    return _threads.back();
+    return Thread( hThd, &_core );
 }
 
 /// <summary>
@@ -53,7 +46,7 @@ call_result_t<ThreadPtr> ProcessThreads::CreateNew( ptr_t threadProc, ptr_t arg,
 /// </summary>
 /// <param name="dontUpdate">Return already existing thread list</param>
 /// <returns>Threads collection</returns>
-std::vector<ThreadPtr>& ProcessThreads::getAll( bool dontUpdate /*= false*/ )
+std::vector<Thread>& ProcessThreads::getAll( bool dontUpdate /*= false*/ )
 {
     if (!_threads.empty() && dontUpdate)
         return _threads;
@@ -75,8 +68,7 @@ std::vector<ThreadPtr>& ProcessThreads::getAll( bool dontUpdate /*= false*/ )
             if (tEntry.th32OwnerProcessID != _core.pid())
                 continue;
 
-            CSLock lg( _lock );
-            _threads.emplace_back( new Thread( tEntry.th32ThreadID, &_core ) );
+            _threads.emplace_back( Thread( tEntry.th32ThreadID, &_core ) );
         }
 
         CloseHandle( hThreadSnapshot );
@@ -89,42 +81,42 @@ std::vector<ThreadPtr>& ProcessThreads::getAll( bool dontUpdate /*= false*/ )
 /// Get main process thread
 /// </summary>
 /// <returns>Pointer to thread object, nullptr if failed</returns>
-ThreadPtr ProcessThreads::getMain()
+Thread* ProcessThreads::getMain()
 {
     uint64_t mintime = MAXULONG64_2;
-    ThreadPtr pMain;
+    Thread* pMain = nullptr;
 
     for (auto& thread : getAll())
     {
-        uint64_t time = thread->startTime();
+        uint64_t time = thread.startTime();
 
         if (time < mintime)
         {
             mintime = time;
-            pMain = thread;
+            pMain = &thread;
         }
     }
 
-    return pMain ? pMain : (!_threads.empty() ? _threads.front() : nullptr);
+    return pMain ? pMain : &_threads[0];
 }
 
 /// <summary>
 /// Get least executed thread
 /// </summary>
 /// <returns>Pointer to thread object, nullptr if failed</returns>
-ThreadPtr ProcessThreads::getLeastExecuted()
+Thread* ProcessThreads::getLeastExecuted()
 {
     uint64_t mintime = MAXULONG64_2;
-    ThreadPtr pThread;
+    Thread* pThread = nullptr;
 
     for (auto& thread : getAll())
     {
-        uint64_t time = thread->execTime();
+        uint64_t time = thread.execTime();
 
         if (time < mintime)
         {
             mintime = time;
-            pThread = thread;
+            pThread = &thread;
         }
     }
 
@@ -135,37 +127,41 @@ ThreadPtr ProcessThreads::getLeastExecuted()
 /// Get most executed thread
 /// </summary>
 /// <returns>Pointer to thread object, nullptr if failed</returns>
-ThreadPtr ProcessThreads::getMostExecuted()
+Thread* ProcessThreads::getMostExecuted()
 {
     uint64_t maxtime = 0;
-    ThreadPtr result;
+    Thread* pThread = getMain();
+    if (pThread->Suspended())
+        pThread = nullptr;
 
     for (auto& thread : getAll( true ))
     {
-        uint64_t time = thread->execTime();
-        if (thread->id() != GetCurrentThreadId() /*&& !thread->Suspended()*/ && time > maxtime)
+        uint64_t time = thread.execTime();
+        if (!thread.Suspended() && time > maxtime)
         {
             maxtime = time;
-            result = thread;
+            pThread = &thread;
         }
     }
 
-    return result;
+    return pThread;
 }
 
 /// <summary>
 /// Get random thread
 /// </summary>
 /// <returns>Pointer to thread object, nullptr if failed</returns>
-ThreadPtr ProcessThreads::getRandom()
+Thread* ProcessThreads::getRandom()
 {
-    if (getAll().empty())
+    getAll();
+
+    if (_threads.empty())
         return nullptr;
 
     static std::random_device rd;
     std::uniform_int_distribution<size_t> dist( 0, _threads.size() - 1 );
 
-    return _threads[dist(rd)];
+    return &_threads[dist(rd)];
 }
 
 /// <summary>
@@ -173,12 +169,12 @@ ThreadPtr ProcessThreads::getRandom()
 /// </summary>
 /// <param name="id">Thread ID</param>
 /// <returns>Pointer to thread object, nullptr if failed</returns>
-ThreadPtr ProcessThreads::get( DWORD id )
+Thread* ProcessThreads::get( DWORD id )
 {
     getAll();
-    auto iter = std::find_if( _threads.begin(), _threads.end(), [id]( const ThreadPtr& thread ) { return thread->id() == id; } );
+    auto iter = std::find_if( _threads.begin(), _threads.end(), [id]( const Thread& item ) { return item.id() == id; } );
     if (iter != _threads.end())
-        return *iter;
+        return &*iter;
 
     return nullptr;
 }

@@ -113,8 +113,6 @@ size_t PatternSearch::Search( void* scanStart, size_t scanSize, std::vector<ptr_
                     out.emplace_back( REBASE( haystack, scanStart, value_offset ) );
                 else
                     out.emplace_back( reinterpret_cast<ptr_t>(haystack) );
-
-                break;
             }
         }
 

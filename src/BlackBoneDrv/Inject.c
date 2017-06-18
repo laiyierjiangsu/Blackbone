@@ -142,10 +142,8 @@ NTSTATUS BBInjectDll( IN PINJECT_DLL pData )
         // If process is protected - temporarily disable protection
         if (PsIsProtectedProcess( pProcess ))
         {
-            prot.pid         = pData->pid;
-            prot.protection  = Policy_Disable;
-            prot.dynamicCode = Policy_Disable;
-            prot.signature   = Policy_Disable;
+            prot.pid = pData->pid;
+            prot.enableState = FALSE;
             BBSetProtection( &prot );
         }
 
@@ -232,9 +230,7 @@ NTSTATUS BBInjectDll( IN PINJECT_DLL pData )
         // Restore protection
         if (prot.pid != 0)
         {
-            prot.protection  = Policy_Enable;
-            prot.dynamicCode = Policy_Enable;
-            prot.signature   = Policy_Enable;
+            prot.enableState = TRUE;
             BBSetProtection( &prot );
         }
 

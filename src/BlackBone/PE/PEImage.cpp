@@ -22,7 +22,6 @@ PEImage::PEImage( void )
 
 PEImage::~PEImage( void )
 {
-    Release();
 }
 
 /// <summary>
@@ -234,7 +233,7 @@ NTSTATUS PEImage::Parse( void* pImageBase /*= nullptr*/ )
 
     // Sections
     for (int i = 0; i < _pImageHdr32->FileHeader.NumberOfSections; ++i, ++pSection)
-        _sections.emplace_back( *pSection );
+        _sections.push_back( *pSection );
 
     return STATUS_SUCCESS;
 }
@@ -462,8 +461,6 @@ int PEImage::GetTLSCallbacks( module_t targetBase, std::vector<ptr_t>& result ) 
         return 0;
 
     uint64_t offset = _is64 ? TLS64( pTls )->AddressOfCallBacks : TLS32( pTls )->AddressOfCallBacks;
-    if (offset == 0)
-        return 0;
 
     // Not at base
     if (imageBase() != reinterpret_cast<module_t>(_pFileBase))

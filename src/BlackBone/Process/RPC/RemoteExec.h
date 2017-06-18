@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../Include/Winheaders.h"
-#include "../../Asm/AsmFactory.h"
+#include "../../Asm/AsmHelper.h"
 #include "../Threads/Threads.h"
 #include "../MemBlock.h"
 
@@ -17,15 +17,11 @@
 namespace blackbone
 {
 
-enum WorkerThreadMode
-{
-    Worker_None,            // No worker thread
-    Worker_CreateNew,       // Create dedicated worker thread
-    Worker_UseExisting,     // Hijack existing thread
-};
-
 class RemoteExec
 {
+    template<typename Fn>
+    friend class RemoteFuncBase;
+
     typedef std::vector<AsmVariant> vecArgs;
 
 public:
@@ -39,13 +35,13 @@ public:
     /// --------------------------------------------------------------------------------------------------------------------------
     /// | Internal return value | Return value |  Last Status code  |  Event handle   |  Space for copied arguments and strings  |
     /// -------------------------------------------------------------------------------------------------------------------------
-    /// |       8/8 bytes       |   8/8 bytes  |      8/8 bytes     |    8/8 bytes    |                                          |
+    /// |       8/8 bytes       |   8/8 bytes  |      8/8 bytes     |   16/16 bytes   |                                          |
     /// --------------------------------------------------------------------------------------------------------------------------
     /// </summary>
-    /// <param name="mode">Worket thread mode</param>
+    /// <param name="bThread">Create worker thread</param>
     /// <param name="bEvent">Create sync event for worker thread</param>
     /// <returns>Status</returns>
-    BLACKBONE_API NTSTATUS CreateRPCEnvironment( WorkerThreadMode mode = Worker_None, bool bEvent = false );
+    BLACKBONE_API NTSTATUS CreateRPCEnvironment( bool bThread = true, bool bEvent = true );
 
     /// <summary>
     /// Create new thread and execute code in it. Wait until execution ends
@@ -53,13 +49,8 @@ public:
     /// <param name="pCode">Code to execute</param>
     /// <param name="size">Code size</param>
     /// <param name="callResult">Code return value</param>
-    /// <param name="modeSwitch">Switch wow64 thread to long mode upon creation</param>
     /// <returns>Status</returns>
-    BLACKBONE_API NTSTATUS ExecInNewThread(
-        PVOID pCode, size_t size, 
-        uint64_t& callResult, 
-        eThreadModeSwitch modeSwitch = AutoSwitch 
-        );
+    BLACKBONE_API NTSTATUS ExecInNewThread( PVOID pCode, size_t size, uint64_t& callResult );
 
     /// <summary>
     /// Execute code in context of our worker thread
@@ -78,7 +69,7 @@ public:
     /// <param name="callResult">Execution result</param>
     /// <param name="thd">Target thread</param>
     /// <returns>Status</returns>
-    BLACKBONE_API NTSTATUS ExecInAnyThread( PVOID pCode, size_t size, uint64_t& callResult, ThreadPtr& thread );
+    BLACKBONE_API NTSTATUS ExecInAnyThread( PVOID pCode, size_t size, uint64_t& callResult, Thread& thread );
 
     /// <summary>
     /// Create new thread with specified entry point and argument
@@ -89,23 +80,6 @@ public:
     BLACKBONE_API DWORD ExecDirect( ptr_t pCode, ptr_t arg );
 
     /// <summary>
-    /// Generate assembly code for remote call.
-    /// </summary>
-    /// <param name="a">Underlying assembler object</param>
-    /// <param name="pfn">Remote function pointer</param>
-    /// <param name="args">Function arguments</param>
-    /// <param name="cc">Calling convention</param>
-    /// <param name="retType">Return type</param>
-    /// <returns>Status code</returns>
-    BLACKBONE_API NTSTATUS PrepareCallAssembly(
-        IAsmHelper& a,
-        ptr_t pfn,
-        std::vector<blackbone::AsmVariant>& args,
-        eCalligConvention cc,
-        eReturnType retType
-    );
-
-    /// <summary>
     /// Generate return from function with event synchronization
     /// </summary>
     /// <param name="a">Target assembly helper</param>
@@ -113,42 +87,11 @@ public:
     /// <param name="retType">Function return type</param>
     /// <param name="retOffset">Return value offset</param>
     BLACKBONE_API void AddReturnWithEvent(
-        IAsmHelper& a,
+        AsmHelperBase& a,
         eModType mt = mt_default, 
         eReturnType retType = rt_int32,
         uint32_t retOffset = RET_OFFSET 
         );
-
-    /// <summary>
-    /// Save value in rax to user buffer
-    /// </summary>
-    /// <param name="a">Target assembly helper</param>
-    BLACKBONE_API inline void SaveCallResult( IAsmHelper& a, uint32_t retOffset = RET_OFFSET )
-    {
-        a->mov( a->zdx, _userData.ptr() + retOffset );
-        a->mov( asmjit::host::dword_ptr( a->zdx ), a->zax );
-    }
-
-#pragma warning(disable : 4127)
-    /// <summary>
-    /// Retrieve call result
-    /// </summary>
-    /// <param name="result">Retrieved result</param>
-    /// <returns>true on success</returns>
-    template<typename T>
-    inline NTSTATUS GetCallResult( T& result )
-    {
-        if (sizeof( T ) > sizeof( uint64_t ))
-        {
-            if (std::is_reference<T>::value)
-                return _userData.Read( _userData.Read<uintptr_t>( RET_OFFSET, 0 ), sizeof( T ), (PVOID)&result );
-            else
-                return _userData.Read( ARGS_OFFSET, sizeof( T ), (PVOID)&result );
-        }
-        else
-            return _userData.Read( RET_OFFSET, sizeof( T ), (PVOID)&result );
-    }
-#pragma warning(default : 4127)
 
     /// <summary>
     /// Retrieve last NTSTATUS code
@@ -168,13 +111,7 @@ public:
     /// Get worker thread
     /// </summary>
     /// <returns></returns>
-    BLACKBONE_API inline ThreadPtr getWorker() { return _workerThread; }
-
-    /// <summary>
-    /// Get execution thread
-    /// </summary>
-    /// <returns></returns>
-    BLACKBONE_API inline ThreadPtr getExecThread() { return _hijackThread ? _hijackThread : _workerThread; }
+    BLACKBONE_API inline Thread* getWorker() { return &_hWorkThd; }
 
     /// <summary>
     /// Ge memory routines
@@ -193,7 +130,7 @@ private:
     /// Create worker RPC thread
     /// </summary>
     /// <returns>Thread ID</returns>
-    call_result_t<DWORD> CreateWorkerThread();
+    DWORD CreateWorkerThread();
 
     /// <summary>
     /// Create event to synchronize APC procedures
@@ -210,23 +147,61 @@ private:
     /// <returns>Status</returns>
     NTSTATUS CopyCode( PVOID pCode, size_t size );
 
+    /// <summary>
+    /// Generate assembly code for remote call.
+    /// </summary>
+    /// <param name="a">Underlying assembler object</param>
+    /// <param name="pfn">Remote function pointer</param>
+    /// <param name="args">Function arguments</param>
+    /// <param name="cc">Calling convention</param>
+    /// <param name="retType">Return type</param>
+    /// <returns>true on success</returns>
+    BLACKBONE_API bool PrepareCallAssembly(
+        AsmHelperBase& a, 
+        const void* pfn,
+        std::vector<blackbone::AsmVariant>& args,
+        eCalligConvention cc,
+        eReturnType retType
+        );
+
+#pragma warning(disable : 4127)
+
+    /// <summary>
+    /// Retrieve call result
+    /// </summary>
+    /// <param name="result">Retrieved result</param>
+    /// <returns>true on success</returns>
+    template<typename T>
+    inline bool GetCallResult( T& result )
+    { 
+        if (sizeof(T) > sizeof(uint64_t))
+        {
+            if (std::is_reference<T>::value)
+                return _userData.Read( _userData.Read<uintptr_t>( RET_OFFSET, 0 ), sizeof(T), (PVOID)&result ) == STATUS_SUCCESS;
+            else
+                return _userData.Read( ARGS_OFFSET, sizeof(T), (PVOID)&result ) == STATUS_SUCCESS;
+        }
+        else
+            return _userData.Read( RET_OFFSET, sizeof(T), (PVOID)&result ) == STATUS_SUCCESS;
+    }
+#pragma warning(default : 4127)
+
     RemoteExec( const RemoteExec& ) = delete;
     RemoteExec& operator =(const RemoteExec&) = delete;
 
 private:    
     // Process routines
-    class Process&        _process;
+    class Process&        _proc;
     class ProcessModules& _mods;
     class ProcessMemory&  _memory;
     class ProcessThreads& _threads;
 
-    ThreadPtr _workerThread;    // Worker thread handle
-    ThreadPtr _hijackThread;    // Thread to use for hijacking  
-    HANDLE    _hWaitEvent;      // APC sync event handle
-    MemBlock  _workerCode;      // Worker thread address space
-    MemBlock  _userCode;        // Codecave for code execution
-    MemBlock  _userData;        // Region to store copied structures and strings
-    bool      _apcPatched;      // KiUserApcDispatcher was patched
+    Thread   _hWorkThd;         // Worker thread handle
+    HANDLE   _hWaitEvent;       // APC sync event handle
+    MemBlock _workerCode;       // Worker thread address space
+    MemBlock _userCode;         // Codecave for code execution
+    MemBlock _userData;         // Region to store copied structures and strings
+    bool     _apcPatched;       // KiUserApcDispatcher was patched
 };
 
 

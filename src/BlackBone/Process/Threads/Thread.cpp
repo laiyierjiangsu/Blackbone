@@ -9,7 +9,7 @@ namespace blackbone
 Thread::Thread( DWORD id, ProcessCore* core, DWORD access /*= DEFAULT_ACCESS*/ )
     : _core( core )
     , _id( id )
-    , _handle( OpenThread( access, FALSE, id ) )
+    , _handle( OpenThread( access , FALSE, id ) )
 {  
 }
 
@@ -18,6 +18,14 @@ Thread::Thread( HANDLE handle, ProcessCore* core )
     , _handle( handle )
 {
     _id = (handle != NULL ? GetThreadIdT( handle ) : 0);
+}
+
+Thread::Thread( const Thread& other )
+    : _core( other._core )
+    , _id( other._id )
+    , _handle( other._handle )
+{
+    other._owner = false;
 }
 
 Thread::~Thread()
@@ -56,8 +64,7 @@ bool Thread::Suspend()
         return true;
     
     // Target process is x86 and not running on x86 OS
-    const auto& barrier = _core->native()->GetWow64Barrier();
-    if (barrier.type == wow_64_32 && !barrier.x86OS)
+    if (_core->isWow64() && !_core->native()->GetWow64Barrier().x86OS)
         return (SAFE_CALL(Wow64SuspendThread, _handle ) != -1);
     else
         return (SuspendThread( _handle ) != -1);
@@ -95,22 +102,23 @@ bool Thread::Suspended()
 /// <param name="ctx">Returned context</param>
 /// <param name="flags">Context flags.</param>
 /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-/// <returns>Status code</returns>
-NTSTATUS Thread::GetContext( _CONTEXT32& ctx, DWORD flags /*= CONTEXT_ALL*/, bool dontSuspend /*= false*/ )
+/// <returns>true on success</returns>
+bool Thread::GetContext( _CONTEXT32& ctx, DWORD flags /*= CONTEXT_ALL*/, bool dontSuspend /*= false*/ )
 {
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    bool result = false;
 
-    memset( &ctx, 0x00, sizeof( ctx ) );
+    memset( &ctx, 0x00, sizeof(ctx) );
     ctx.ContextFlags = flags;
 
     if (dontSuspend || Suspend())
     {
-        status = _core->native()->GetThreadContextT( _handle, ctx );
+        result = (_core->native()->GetThreadContextT( _handle, ctx ) == STATUS_SUCCESS);
+
         if (!dontSuspend)
             Resume();
     }
         
-    return status;
+    return result;
 }
 
 /// <summary>
@@ -119,22 +127,23 @@ NTSTATUS Thread::GetContext( _CONTEXT32& ctx, DWORD flags /*= CONTEXT_ALL*/, boo
 /// <param name="ctx">Returned context</param>
 /// <param name="flags">Context flags.</param>
 /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-/// <returns>Status code</returns>
-NTSTATUS Thread::GetContext( _CONTEXT64& ctx, DWORD flags /*= CONTEXT64_ALL*/, bool dontSuspend /*= false*/ )
+/// <returns>true on success</returns>
+bool Thread::GetContext( _CONTEXT64& ctx, DWORD flags /*= CONTEXT64_ALL*/, bool dontSuspend /*= false*/ )
 {
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    bool result = false;
 
     memset( &ctx, 0x00, sizeof(ctx) );
     ctx.ContextFlags = flags;
 
     if (dontSuspend || Suspend())
     {
-        status = _core->native()->GetThreadContextT( _handle, ctx );
+        result = (_core->native()->GetThreadContextT( _handle, ctx ) == STATUS_SUCCESS);
+
         if (!dontSuspend)
             Resume();
     }
 
-    return status;
+    return result;
 }
 
 /// <summary>
@@ -142,18 +151,19 @@ NTSTATUS Thread::GetContext( _CONTEXT64& ctx, DWORD flags /*= CONTEXT64_ALL*/, b
 /// </summary>
 /// <param name="ctx">Context to set</param>
 /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-/// <returns>Status code</returns>
-NTSTATUS Thread::SetContext( _CONTEXT32& ctx, bool dontSuspend /*= false */ )
+/// <returns>true on success</returns>
+bool Thread::SetContext( _CONTEXT32& ctx, bool dontSuspend /*= false */ )
 {
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    bool result = false;
+
     if (dontSuspend || Suspend())
     {
-        status = _core->native()->SetThreadContextT( _handle, ctx );
+        result = NT_SUCCESS( _core->native()->SetThreadContextT( _handle, ctx ) );
         if (!dontSuspend)
             Resume();
     }
 
-    return status;
+    return result;
 }
 
 /// <summary>
@@ -161,30 +171,29 @@ NTSTATUS Thread::SetContext( _CONTEXT32& ctx, bool dontSuspend /*= false */ )
 /// </summary>
 /// <param name="ctx">Context to set</param>
 /// <param name="dontSuspend">true if thread shouldn't be suspended before retrieving context</param>
-/// <returns>Status code</returns>
-NTSTATUS Thread::SetContext( _CONTEXT64& ctx, bool dontSuspend /*= false*/ )
+/// <returns>true on success</returns>
+bool Thread::SetContext( _CONTEXT64& ctx, bool dontSuspend /*= false*/ )
 {
-    NTSTATUS status = STATUS_UNSUCCESSFUL;
+    bool result = false;
+
     if(dontSuspend || Suspend())
     {
-        status = _core->native()->SetThreadContextT( _handle, ctx );
+        result = NT_SUCCESS( _core->native()->SetThreadContextT( _handle, ctx ) );
         if(!dontSuspend)
             Resume();
     }
 
-    return status;
+    return result;
 }
 
 /// <summary>
 /// Terminate thread
 /// </summary>
 /// <param name="code">Exit code</param>
-/// <returns>Status code</returns>
-NTSTATUS Thread::Terminate( DWORD code /*= 0*/ )
+/// <returns>true on success</returns>
+bool Thread::Terminate( DWORD code /*= 0*/ )
 {
-    SetLastNtStatus( STATUS_SUCCESS );
-    TerminateThread( _handle, code );
-    return LastNtStatus();
+    return (TerminateThread( _handle, code ) == TRUE);
 }
 
 /// <summary>
@@ -204,17 +213,17 @@ bool Thread::Join( int timeout /*= INFINITE*/ )
 /// <param name="type">Breakpoint type(read/write/execute)</param>
 /// <param name="length">Number of bytes to include into breakpoint</param>
 /// <returns>Index of used breakpoint; -1 if failed</returns>
-call_result_t<int> Thread::AddHWBP( ptr_t addr, HWBPType type, HWBPLength length )
+int Thread::AddHWBP( ptr_t addr, HWBPType type, HWBPLength length )
 {
     _CONTEXT64 context64 = { 0 };
     _CONTEXT32 context32 = { 0 };
     bool use64 = !_core->native()->GetWow64Barrier().x86OS;
 
     // CONTEXT_DEBUG_REGISTERS can be operated without thread suspension
-    auto status = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
+    bool res = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
     auto pDR7 = use64 ? reinterpret_cast<regDR7*>(&context64.Dr7) : reinterpret_cast<regDR7*>(&context32.Dr7);
-    if (!NT_SUCCESS( status ))
-        return status;
+    if (!res)
+        return -1;
 
     // Check if HWBP is already present
     for (int i = 0; i < 4; i++)
@@ -229,7 +238,10 @@ call_result_t<int> Thread::AddHWBP( ptr_t addr, HWBPType type, HWBPLength length
 
     // If all 4 registers are occupied - error
     if (freeIdx < 0)
-        return STATUS_NO_MORE_ENTRIES;
+    {
+        LastNtStatus( STATUS_NO_MORE_ENTRIES );
+        return -1;
+    }
 
     // Enable corresponding HWBP and local BP flag
 
@@ -241,8 +253,8 @@ call_result_t<int> Thread::AddHWBP( ptr_t addr, HWBPType type, HWBPLength length
     use64 ? *(&context64.Dr0 + freeIdx) = addr : *(&context32.Dr0 + freeIdx) = static_cast<DWORD>(addr);
 
     // Write values to registers
-    status = use64 ? SetContext( context64, true ) : SetContext( context32, true );
-    return call_result_t<int>( freeIdx, status );
+    res = use64 ? SetContext( context64, true ) : SetContext( context32, true );
+    return res ? freeIdx : -1;
 }
 
 /// <summary>
@@ -250,7 +262,7 @@ call_result_t<int> Thread::AddHWBP( ptr_t addr, HWBPType type, HWBPLength length
 /// </summary>
 /// <param name="idx">Breakpoint index</param>
 /// <returns>true on success</returns>
-NTSTATUS Thread::RemoveHWBP( int idx )
+bool Thread::RemoveHWBP( int idx )
 {
     if (idx < 0 || idx > 4)
         return false;
@@ -258,10 +270,10 @@ NTSTATUS Thread::RemoveHWBP( int idx )
     _CONTEXT64 context64 = { 0 };
     _CONTEXT32 context32 = { 0 };
     bool use64 = !_core->native()->GetWow64Barrier().x86OS;
-    auto status = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
+    bool res = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
     auto pDR7 = use64 ? reinterpret_cast<regDR7*>(&context64.Dr7) : reinterpret_cast<regDR7*>(&context32.Dr7);
-    if (!NT_SUCCESS( status ))
-        return status;
+    if (!res)
+        return false;
    
     pDR7->setLocal( idx, 0 );
     pDR7->setLen( idx, 0 );
@@ -277,14 +289,15 @@ NTSTATUS Thread::RemoveHWBP( int idx )
 /// </summary>
 /// <param name="ptr">Breakpoint address</param>
 /// <returns>true on success</returns>
-NTSTATUS Thread::RemoveHWBP( ptr_t ptr )
+bool Thread::RemoveHWBP( ptr_t ptr )
 {
     _CONTEXT64 context64 = { 0 };
     _CONTEXT32 context32 = { 0 };
     bool use64 = !_core->native()->GetWow64Barrier().x86OS;
-    auto status = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
+    bool res = use64 ? GetContext( context64, CONTEXT64_DEBUG_REGISTERS, true ) : GetContext( context32, CONTEXT_DEBUG_REGISTERS, true );
     auto pDR7 = use64 ? reinterpret_cast<regDR7*>(&context64.Dr7) : reinterpret_cast<regDR7*>(&context32.Dr7);
-    if (!NT_SUCCESS( status ))
+
+    if (!res)
         return false;
 
     // Search for breakpoint
@@ -304,7 +317,7 @@ NTSTATUS Thread::RemoveHWBP( ptr_t ptr )
         }
     }
 
-    return STATUS_NOT_FOUND;
+    return false;
 }
 
 /// <summary>
@@ -353,7 +366,7 @@ uint64_t Thread::execTime()
 /// </summary>
 void Thread::Close()
 {
-    if (_handle && _handle != INVALID_HANDLE_VALUE)
+    if (_owner && _handle)
     {
         CloseHandle( _handle );
         _handle = NULL;

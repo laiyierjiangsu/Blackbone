@@ -66,15 +66,15 @@ NTSTATUS DriverControl::Reload( std::wstring path /*= L"" */ )
         const wchar_t* filename = nullptr;
 
         if (IsWindows10OrGreater())
-            filename = BLACKBONE_FILE_NAME_10;
+            filename = L"BlackBoneDrv10.sys";
         else if (IsWindows8Point1OrGreater())
-            filename = BLACKBONE_FILE_NAME_81;
+            filename = L"BlackBoneDrv81.sys";
         else if (IsWindows8OrGreater())
-            filename = BLACKBONE_FILE_NAME_8;
+            filename = L"BlackBoneDrv8.sys";
         else if (IsWindows7OrGreater())
-            filename = BLACKBONE_FILE_NAME_7;
+            filename = L"BlackBoneDrv7.sys";
         else
-            filename = BLACKBONE_FILE_NAME;
+            filename = L"BlackBoneDrv.sys";
 
         path = Utils::GetExeDirectory() + L"\\" + filename;
     }
@@ -83,7 +83,7 @@ NTSTATUS DriverControl::Reload( std::wstring path /*= L"" */ )
     if (!NT_SUCCESS( _loadStatus ))
     {
         BLACKBONE_TRACE( L"Failed to load driver %ls. Status 0x%X", path.c_str(), _loadStatus );
-        return _loadStatus;
+        return LastNtStatus( _loadStatus );
     }
 
     _hDriver = CreateFileW( 
@@ -275,19 +275,12 @@ NTSTATUS DriverControl::DisableDEP( DWORD pid )
 /// Change process protection flag
 /// </summary>
 /// <param name="pid">Target PID</param>
-/// <param name="protection">Process protection policy</param>
-/// <param name="dynamicCode">Prohibit dynamic code</param>
-/// <param name="binarySignature">Prohibit loading non-microsoft dlls</param>
+/// <param name="enable">true to enable protection, false to disable</param>
 /// <returns>Status code</returns>
-NTSTATUS DriverControl::ProtectProcess(
-    DWORD pid,
-    PolicyOpt protection,
-    PolicyOpt dynamicCode /*= Policy_Keep*/,
-    PolicyOpt binarySignature /*= Policy_Keep*/
-    )
+NTSTATUS DriverControl::ProtectProcess( DWORD pid, bool enable )
 {
     DWORD bytes = 0;
-    SET_PROC_PROTECTION setProt = { pid, protection, dynamicCode, binarySignature };
+    SET_PROC_PROTECTION setProt = { pid, enable };
 
     // Not loaded
     if (_hDriver == INVALID_HANDLE_VALUE)

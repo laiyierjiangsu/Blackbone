@@ -1,37 +1,38 @@
-#define CATCH_CONFIG_FAST_COMPILE
 #include "Tests.h"
 #include "../BlackBone/Patterns/PatternSearch.h"
 
-TEST_CASE( "04. Patterns" )
+void TestPatterns()
 {
     Process explorer;
+    std::vector<DWORD> procs;
+    std::vector<ptr_t> results;
 
-    REQUIRE_NT_SUCCESS( explorer.Attach( L"explorer.exe" ) );
+    std::wcout << L"Remote pattern match test. Using 'explorer.exe as a target'\n";
 
-    // Scan all allocated process memory
-    SECTION( "Pattern '48 89 D0'" )
+    Process::EnumByName( L"explorer.exe", procs );
+
+    if (!procs.empty())
     {
-        std::wcout << L"Local pattern match in 'explorer.exe'" << std::endl;
+        explorer.Attach( procs.front() );
+        auto pMainMod = explorer.modules().GetMainModule();
 
-        PatternSearch ps1( "\x48\x89\xD0" );
-
-        std::vector<ptr_t> results;
-        ps1.SearchRemoteWhole( explorer, false, 0, results );
-        CHECK( results.size() > 0 );
-    }   
-
-    // Scan only inside 'explorer.exe' module
-    SECTION( "Pattern '56 57 ?? 55' with CC wildcard" )
-    {
-        std::wcout << L"Remote pattern match in 'explorer.exe'" << std::endl;
-
+        // Initialize patterns
+        PatternSearch ps1( "\x48\x89\xD1" );
         PatternSearch ps2{ 0x56, 0x57, 0xCC, 0x55 };
 
-        auto pMainMod = explorer.modules().GetMainModule();
-        REQUIRE( pMainMod.get() != nullptr );
+        // Scan all allocated process memory
+        std::wcout << L"Searching for '48 89 D1'... ";
+        ps1.SearchRemoteWhole( explorer, false, 0, results );
+        std::wcout << L"Found " << results.size() << L" results\n";
 
-        std::vector<ptr_t> results;
+        results.clear();
+
+        // Scan only inside 'explorer.exe' module
+        std::wcout << L"Searching for '56 57 ?? 55 using CC as a wildcard'... ";
         ps2.SearchRemote( explorer, 0xCC, pMainMod->baseAddress, pMainMod->size, results );
-        CHECK( results.size() > 0 );
+        std::wcout << L"Found " << results.size() << L" results\n\n";
+        results.clear();
     }
+    else
+        std::wcout << L"Can't find explorer.exe, aborting\n\n";
 }

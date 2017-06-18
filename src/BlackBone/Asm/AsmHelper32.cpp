@@ -7,7 +7,7 @@ namespace blackbone
 {
 
 AsmHelper32::AsmHelper32( )
-    : IAsmHelper( asmjit::kArchX86 )
+    : AsmHelperBase( asmjit::kArchX86 )
 {
 }
 
@@ -23,7 +23,7 @@ void AsmHelper32::GenPrologue( bool switchMode /*= false*/ )
 {
     if(switchMode == true)
     {
-        IAsmHelper::SwitchTo64();
+        AsmHelperBase::SwitchTo64();
     }
     else
     {
@@ -37,11 +37,14 @@ void AsmHelper32::GenPrologue( bool switchMode /*= false*/ )
 /// </summary>
 /// <param name="switchMode">Unused</param>
 /// <param name="retSize">Stack change value</param>
-void AsmHelper32::GenEpilogue( bool switchMode /*= false*/ , int retSize /*= -1 */ )
+void AsmHelper32::GenEpilogue( bool switchMode /*= false*/ , int retSize /*= 0xC */ )
 {
+    if (retSize == -1)
+        retSize = WordSize;
+
     if (switchMode == true)
     {
-        IAsmHelper::SwitchTo86();
+        AsmHelperBase::SwitchTo86();
     }
     else
     {
@@ -49,10 +52,7 @@ void AsmHelper32::GenEpilogue( bool switchMode /*= false*/ , int retSize /*= -1 
         _assembler.pop( asmjit::host::ebp );
     }
 
-    if (retSize == -1)
-        _assembler.ret();
-    else
-        _assembler.ret( retSize );
+    _assembler.ret( retSize );
 }
 
 /// <summary>
@@ -61,7 +61,7 @@ void AsmHelper32::GenEpilogue( bool switchMode /*= false*/ , int retSize /*= -1 
 /// <param name="pFN">Function pointer</param>
 /// <param name="args">Function arguments</param>
 /// <param name="cc">Calling convention</param>
-void AsmHelper32::GenCall( const AsmFunctionPtr& pFN, const std::vector<AsmVariant>& args, eCalligConvention cc /*= CC_stdcall*/ )
+void AsmHelper32::GenCall( const AsmVariant& pFN, const std::vector<AsmVariant>& args, eCalligConvention cc /*= CC_stdcall*/ )
 {
     std::set<int> passedIdx;
 
@@ -87,7 +87,6 @@ void AsmHelper32::GenCall( const AsmFunctionPtr& pFN, const std::vector<AsmVaria
     // Direct pointer
     if(pFN.type == AsmVariant::imm)
     {
-        assert( pFN.imm_val64 <= std::numeric_limits<uint32_t>::max() );
         _assembler.mov( asmjit::host::eax, pFN.imm_val );
         _assembler.call( asmjit::host::eax );
     }
@@ -111,7 +110,7 @@ void AsmHelper32::GenCall( const AsmFunctionPtr& pFN, const std::vector<AsmVaria
             if (arg.type != AsmVariant::dataPtr)
                 argsize += arg.size;
             else
-                argsize += sizeof( uint32_t );
+                argsize += sizeof(void*);
         }
 
         _assembler.add( asmjit::host::esp, argsize );
@@ -124,7 +123,7 @@ void AsmHelper32::GenCall( const AsmFunctionPtr& pFN, const std::vector<AsmVaria
 /// </summary>
 /// <param name="pExitThread">NtTerminateThread address</param>
 /// <param name="resultPtr">Memry where eax value will be saved</param>
-void AsmHelper32::ExitThreadWithStatus( uint64_t pExitThread, uint64_t resultPtr )
+void AsmHelper32::ExitThreadWithStatus( uintptr_t pExitThread, uintptr_t resultPtr )
 {
     if (resultPtr != 0)
     {
@@ -138,7 +137,7 @@ void AsmHelper32::ExitThreadWithStatus( uint64_t pExitThread, uint64_t resultPtr
     _assembler.mov( asmjit::host::eax, pExitThread );
     _assembler.call( asmjit::host::eax );
     
-    _assembler.ret();
+    GenEpilogue();
 }
 
 /// <summary>
@@ -150,10 +149,10 @@ void AsmHelper32::ExitThreadWithStatus( uint64_t pExitThread, uint64_t resultPtr
 /// <param name="errPtr">Error code memory location</param>
 /// <param name="rtype">Return type</param>
 void AsmHelper32::SaveRetValAndSignalEvent( 
-    uint64_t pSetEvent,
-    uint64_t ResultPtr,
-    uint64_t EventPtr,
-    uint64_t errPtr,
+    uintptr_t pSetEvent,
+    uintptr_t ResultPtr,
+    uintptr_t EventPtr,
+    uintptr_t errPtr,
     eReturnType rtype /*= rt_int32*/ 
     )
 {
@@ -169,8 +168,10 @@ void AsmHelper32::SaveRetValAndSignalEvent(
         _assembler.mov( asmjit::host::dword_ptr( asmjit::host::ecx ), asmjit::host::eax );
 
     // Save last NT status
-    _assembler.mov( asmjit::host::edx, asmjit::host::dword_ptr_abs( 0x18 ).setSegment( asmjit::host::fs ) );
-    _assembler.add( asmjit::host::edx, 0x598 + 0x197 * sizeof( uint32_t ) );
+    SetTebPtr();
+
+    // Save status
+    _assembler.add( asmjit::host::edx, LAST_STATUS_OFS );
     _assembler.mov( asmjit::host::edx, asmjit::host::dword_ptr( asmjit::host::edx ) );
     _assembler.mov( asmjit::host::eax, errPtr );
     _assembler.mov( asmjit::host::dword_ptr( asmjit::host::eax ), asmjit::host::edx );
@@ -197,7 +198,6 @@ void AsmHelper32::PushArg( const AsmVariant& arg, eArgType regidx /*= AT_stack*/
 
     case AsmVariant::imm:
     case AsmVariant::structRet:
-        // TODO: resolve 64bit imm values instead of ignoring high bits
         PushArgp( arg.imm_val, regidx );
         break;
 
@@ -209,7 +209,7 @@ void AsmHelper32::PushArg( const AsmVariant& arg, eArgType regidx /*= AT_stack*/
     case AsmVariant::dataStruct:
         {
             // Ensure stack remain aligned on word size
-            size_t realSize = Align( arg.size, sizeof( uint32_t ) );
+            size_t realSize = (arg.size < WordSize) ? WordSize : arg.size;
             _assembler.sub( asmjit::host::esp, realSize );
             _assembler.mov( asmjit::host::esi, arg.new_imm_val );
             _assembler.mov( asmjit::host::edi, asmjit::host::esp);

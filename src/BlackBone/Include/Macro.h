@@ -1,6 +1,5 @@
 #pragma once
 #include "../Config.h"
-#include <stdint.h>
 
 // Architecture-dependent pointer size
 #define WordSize sizeof(void*)
@@ -12,9 +11,6 @@
 // Field offset info
 #define FIELD_OFFSET2(type, field)  ((LONG)(LONG_PTR)&(((type)0)->field))
 #define GET_FIELD_PTR(entry, field) (uintptr_t)((uint8_t*)entry + FIELD_OFFSET2(decltype(entry), field))
-
-#define CALL_64_86(b, f, ...) (b ? f<uint64_t>(__VA_ARGS__) : f<uint32_t>(__VA_ARGS__))
-#define FIELD_PTR_64_86(b, e, t, f) (b ? fieldPtr( e, &t<uint64_t>::f ) : fieldPtr( e, &t<uint32_t>::f ))
 
 #define LODWORD(l) ((uint32_t)(((uint64_t)(l)) & 0xffffffff))
 #define HIDWORD(l) ((uint32_t)((((uint64_t)(l)) >> 32) & 0xffffffff))
@@ -75,26 +71,6 @@
 template<int s> 
 struct CompileTimeSizeOf;
 
-// offsetof alternative
-template<typename T, typename U>
-constexpr size_t offsetOf( U T::*member )
-{
-    return (size_t)&((T*)nullptr->*member);
-}
-
-template<typename T, typename U>
-constexpr uint64_t fieldPtr( uint64_t base, U T::*member )
-{
-    return base + offsetOf( member );
-}
-
-// CONTAINING_RECORD alternative
-template<typename T, typename U>
-constexpr uint64_t structBase( uint64_t ptr, U T::*member )
-{
-    return ptr - offsetOf( member );
-}
-
 // Type-unsafe cast.
 template<typename _Tgt, typename _Src>
 inline _Tgt brutal_cast( const _Src& src )
@@ -130,9 +106,7 @@ inline NTSTATUS LastNtStatus()
 /// </summary>
 /// <param name="status">The status.</param>
 /// <returns></returns>
-inline NTSTATUS SetLastNtStatus( NTSTATUS status )
+inline NTSTATUS LastNtStatus( NTSTATUS status )
 {
     return *(NTSTATUS*)((unsigned char*)NtCurrentTeb() + LAST_STATUS_OFS) = status;
 }
-
-#define SharedUserData32 ((KUSER_SHARED_DATA* const)0x7FFE0000)

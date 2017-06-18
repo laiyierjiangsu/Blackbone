@@ -124,13 +124,15 @@ BOOLEAN
 NTAPI
 PsIsProtectedProcess( IN PEPROCESS Process );
 
-typedef VOID( NTAPI *PKNORMAL_ROUTINE )(
+typedef VOID( NTAPI *PKNORMAL_ROUTINE )
+    (
         PVOID NormalContext,
         PVOID SystemArgument1,
         PVOID SystemArgument2
     );
 
-typedef VOID( NTAPI* PKKERNEL_ROUTINE)(
+typedef VOID( NTAPI* PKKERNEL_ROUTINE)
+    (
         PRKAPC Apc,
         PKNORMAL_ROUTINE *NormalRoutine,
         PVOID *NormalContext,
@@ -177,31 +179,4 @@ RtlImageDirectoryEntryToData(
     BOOLEAN MappedAsImage,
     USHORT DirectoryEntry,
     PULONG Size
-    );
-
-
-typedef BOOLEAN ( *EX_ENUMERATE_HANDLE_ROUTINE )(
-#if !defined(_WIN7_)
-    IN PHANDLE_TABLE HandleTable,
-#endif
-    IN PHANDLE_TABLE_ENTRY HandleTableEntry,
-    IN HANDLE Handle,
-    IN PVOID EnumParameter
-    );
-
-NTKERNELAPI
-BOOLEAN
-ExEnumHandleTable(
-    IN PHANDLE_TABLE HandleTable,
-    IN EX_ENUMERATE_HANDLE_ROUTINE EnumHandleProcedure,
-    IN PVOID EnumParameter,
-    OUT PHANDLE Handle
-    );
-
-NTKERNELAPI
-VOID
-FASTCALL
-ExfUnblockPushLock (
-    IN OUT PEX_PUSH_LOCK PushLock,
-    IN OUT PVOID WaitBlock
     );

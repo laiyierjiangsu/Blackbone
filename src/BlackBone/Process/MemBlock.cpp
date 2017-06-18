@@ -5,6 +5,12 @@
 
 namespace blackbone
 {
+
+MemBlock::MemBlock()
+    : _memory( nullptr )
+{
+}
+
 /// <summary>
 /// MemBlock ctor
 /// </summary>
@@ -14,19 +20,6 @@ namespace blackbone
 /// <param name="prot">Memory protection</param>
 /// <param name="own">false if caller will be responsible for block deallocation</param>
 MemBlock::MemBlock( ProcessMemory* mem, ptr_t ptr, size_t size, DWORD prot, bool own /*= true*/, bool physical /*= false*/ )
-    : _pImpl( new MemBlockImpl( mem, ptr, size, prot, own, physical ) )
-{
-}
-
-/// <summary>
-/// MemBlock_p ctor
-/// </summary>
-/// <param name="mem">Process memory routines</param>
-/// <param name="ptr">Memory address</param>
-/// <param name="size">Block size</param>
-/// <param name="prot">Memory protection</param>
-/// <param name="own">false if caller will be responsible for block deallocation</param>
-MemBlock::MemBlockImpl::MemBlockImpl( class ProcessMemory* mem, ptr_t ptr, size_t size, DWORD prot, bool own /*= true*/, bool physical /*= false */ )
     : _ptr( ptr )
     , _size( size )
     , _protection( prot )
@@ -41,21 +34,24 @@ MemBlock::MemBlockImpl::MemBlockImpl( class ProcessMemory* mem, ptr_t ptr, size_
 /// </summary>
 /// <param name="mem">Process memory routines</param>
 /// <param name="ptr">Memory address</param>
-/// <param name="own">false if caller will be responsible for block deallocation</param>
+/// <param name="own">true if caller will be responsible for block deallocation</param>
 MemBlock::MemBlock( ProcessMemory* mem, ptr_t ptr, bool own /*= true*/ )
-    : _pImpl( new MemBlockImpl )
+    : _ptr( ptr )
+    , _own( own )
+    , _memory( mem )
 {
-    _pImpl->_ptr = ptr;
-    _pImpl->_own = own;
-    _pImpl->_memory = mem;
-
     MEMORY_BASIC_INFORMATION64 mbi = { 0 };
-    mem->Query( _pImpl->_ptr, &mbi );
+    mem->Query( _ptr, &mbi );
 
-    _pImpl->_protection = mbi.Protect;
-    _pImpl->_size = (size_t)mbi.RegionSize;
+    _protection = mbi.Protect;
+    _size = (size_t)mbi.RegionSize;
 }
 
+MemBlock::~MemBlock()
+{
+    if (_own)
+        Free();
+}
 
 /// <summary>
 /// Allocate new memory block
@@ -66,20 +62,18 @@ MemBlock::MemBlock( ProcessMemory* mem, ptr_t ptr, bool own /*= true*/ )
 /// <param name="protection">Memory protection</param>
 /// <param name="own">false if caller will be responsible for block deallocation</param>
 /// <returns>Memory block. If failed - returned block will be invalid</returns>
-call_result_t<MemBlock> MemBlock::Allocate( ProcessMemory& process, size_t size, ptr_t desired /*= 0*/, DWORD protection /*= PAGE_EXECUTE_READWRITE */, bool own /*= true*/ )
+MemBlock MemBlock::Allocate( ProcessMemory& process, size_t size, ptr_t desired /*= 0*/, DWORD protection /*= PAGE_EXECUTE_READWRITE */, bool own /*= true*/ )
 {
     ptr_t desired64 = desired;
     DWORD newProt = CastProtection( protection, process.core().DEP() );
     
-    NTSTATUS status = process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, newProt );
-    if (!NT_SUCCESS( status ))
+    if (process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, newProt ) != STATUS_SUCCESS)
     {
         desired64 = 0;
-        status = process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, newProt );
-        if (NT_SUCCESS( status ))
-            return call_result_t<MemBlock>( MemBlock( &process, desired64, size, protection, own ), STATUS_IMAGE_NOT_AT_BASE );
+        if (process.core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, newProt ) == STATUS_SUCCESS)
+            LastNtStatus( STATUS_IMAGE_NOT_AT_BASE );
         else
-            return status;
+            desired64 = 0;
     }
 
     return MemBlock( &process, desired64, size, protection, own );
@@ -92,21 +86,18 @@ call_result_t<MemBlock> MemBlock::Allocate( ProcessMemory& process, size_t size,
 /// <param name="desired">Desired base address of new block</param>
 /// <param name="protection">Memory protection</param>
 /// <returns>New block address</returns>
-call_result_t<ptr_t> MemBlock::Realloc( size_t size, ptr_t desired /*= 0*/, DWORD protection /*= PAGE_EXECUTE_READWRITE*/ )
+ptr_t MemBlock::Realloc( size_t size, ptr_t desired /*= 0*/, DWORD protection /*= PAGE_EXECUTE_READWRITE*/ )
 {
-    if (!_pImpl)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
     ptr_t desired64 = desired;
-    auto status = _pImpl->_memory->core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, protection );
+    _memory->core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, protection );
+
     if (!desired64)
     {
         desired64 = 0;
-        status = _pImpl->_memory->core().native()->VirtualAllocExT( desired64, size, MEM_COMMIT, protection );
-        if (!NT_SUCCESS( status ))
-            return status;
+        _memory->core( ).native( )->VirtualAllocExT( desired64, size, MEM_COMMIT, protection );
 
-        status = STATUS_IMAGE_NOT_AT_BASE;
+        if (desired64)
+            LastNtStatus( STATUS_IMAGE_NOT_AT_BASE );
     }
 
     // Replace current instance
@@ -114,12 +105,12 @@ call_result_t<ptr_t> MemBlock::Realloc( size_t size, ptr_t desired /*= 0*/, DWOR
     {
         Free();
 
-        _pImpl->_ptr = desired64;
-        _pImpl->_size = size;
-        _pImpl->_protection = protection;
+        _ptr = desired64;
+        _size = size;
+        _protection = protection;
     }
 
-    return call_result_t<ptr_t>( desired64, status );
+    return desired64;
 }
 
 /// <summary>
@@ -132,16 +123,13 @@ call_result_t<ptr_t> MemBlock::Realloc( size_t size, ptr_t desired /*= 0*/, DWOR
 /// <returns>Status</returns>
 NTSTATUS MemBlock::Protect( DWORD protection, uintptr_t offset /*= 0*/, size_t size /*= 0*/, DWORD* pOld /*= nullptr */ )
 {
-    if (!_pImpl)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
-    auto prot = CastProtection( protection, _pImpl->_memory->core().DEP() );
+    auto prot = CastProtection( protection, _memory->core().DEP() );
 
     if (size == 0)
-        size = _pImpl->_size;
+        size = _size;
 
-    return _pImpl->_physical ? Driver().ProtectMem( _pImpl->_memory->core().pid(), _pImpl->_ptr + offset, size, prot ) :
-        _pImpl->_memory->Protect( _pImpl->_ptr + offset, size, prot, pOld );
+    return _physical ? Driver().ProtectMem( _memory->core().pid(), _ptr + offset, size, prot ) : 
+                       _memory->Protect( _ptr + offset, size, prot, pOld );
 }
 
 /// <summary>
@@ -150,39 +138,27 @@ NTSTATUS MemBlock::Protect( DWORD protection, uintptr_t offset /*= 0*/, size_t s
 /// <param name="size">Size of memory chunk to free. If 0 - whole block is freed</param>
 NTSTATUS MemBlock::Free( size_t size /*= 0*/ )
 {
-    if (!_pImpl)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
-    return _pImpl->Free();
-}
-
-/// <summary>
-/// Free memory
-/// </summary>
-/// <param name="size">Size of memory chunk to free. If 0 - whole block is freed</param>
-NTSTATUS MemBlock::MemBlockImpl::Free( size_t size /*= 0 */ )
-{
-    if (_ptr == 0)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
-    size = Align( size, 0x1000 );
-
-    NTSTATUS status = _physical ? Driver().FreeMem( _memory->core().pid(), _ptr, size, MEM_RELEASE ) :
-        _memory->Free( _ptr, size, size == 0 ? MEM_RELEASE : MEM_DECOMMIT );
-
-    if (!NT_SUCCESS( status ))
-        return LastNtStatus();
-
-    if (size == 0)
+    if (_ptr != 0)
     {
-        _ptr = 0;
-        _size = 0;
-        _protection = 0;
-    }
-    else
-    {
-        _ptr += size;
-        _size -= size;
+        size = Align( size, 0x1000 );
+
+        NTSTATUS status = _physical ? Driver().FreeMem( _memory->core().pid(), _ptr, size, MEM_RELEASE ) :
+            _memory->Free( _ptr, size, size == 0 ? MEM_RELEASE : MEM_DECOMMIT );
+
+        if (!NT_SUCCESS( status ))
+            return LastNtStatus();
+
+        if(size == 0)
+        {
+            _ptr  = 0;
+            _size = 0;
+            _protection = 0;
+        }
+        else
+        {
+            _ptr  += size;
+            _size -= size;
+        }
     }
 
     return STATUS_SUCCESS;
@@ -201,10 +177,7 @@ NTSTATUS MemBlock::MemBlockImpl::Free( size_t size /*= 0 */ )
 /// <returns>Status</returns>
 NTSTATUS MemBlock::Read( uintptr_t offset, size_t size, PVOID pResult, bool handleHoles /*= false*/ )
 {
-    if (!_pImpl)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
-    return _pImpl->_memory->Read( _pImpl->_ptr + offset, size, pResult, handleHoles );
+    return _memory->Read( _ptr + offset, size, pResult, handleHoles );
 }
 
 
@@ -217,10 +190,7 @@ NTSTATUS MemBlock::Read( uintptr_t offset, size_t size, PVOID pResult, bool hand
 /// <returns>Status</returns>
 NTSTATUS MemBlock::Write( uintptr_t offset, size_t size, const void* pData )
 {
-    if (!_pImpl)
-        return STATUS_MEMORY_NOT_ALLOCATED;
-
-    return _pImpl->_memory->Write( _pImpl->_ptr + offset, size, pData );
+    return _memory->Write( _ptr + offset, size, pData );
 }
 
 /// <summary>
@@ -228,7 +198,13 @@ NTSTATUS MemBlock::Write( uintptr_t offset, size_t size, const void* pData )
 /// </summary>
 void MemBlock::Reset()
 {
-    _pImpl.reset();
+    Free();
+
+    _ptr = 0;
+    _size = 0;
+    _protection = 0;
+    _own = false;
+    _memory = nullptr;
 }
 
 }

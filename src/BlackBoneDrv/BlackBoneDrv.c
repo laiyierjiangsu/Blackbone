@@ -319,7 +319,6 @@ NTSTATUS BBInitDynamicData( IN OUT PDYNAMIC_DATA pData )
             case WINVER_81:
                 pData->KExecOpt         = 0x1B7;
                 pData->Protection       = 0x67A;
-                pData->EProcessFlags2   = 0x2F8;
                 pData->ObjTable         = 0x408;
                 pData->VadRoot          = 0x5D8;
                 pData->NtCreateThdIndex = 0xB0;
@@ -332,66 +331,63 @@ NTSTATUS BBInitDynamicData( IN OUT PDYNAMIC_DATA pData )
                     pData->ExRemoveTable -= 0x5E;
                 break;
 
-                // Windows 10, build 15063/14393/10586
+            // Windows 10, build 15063/14393/10586
             case WINVER_10:
-                if (verInfo.dwBuildNumber == 10586)
-                {
-                    pData->KExecOpt         = 0x1BF;
-                    pData->Protection       = 0x6B2;
-                    pData->EProcessFlags2   = 0x300;
-                    pData->ObjTable         = 0x418;
-                    pData->VadRoot          = 0x610;
-                    pData->NtCreateThdIndex = 0xB4;
-                    pData->NtTermThdIndex   = 0x53;
-                    pData->PrevMode         = 0x232;
-                    pData->ExitStatus       = 0x6E0;
-                    pData->MiAllocPage      = 0;
-                    if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8D\x7D\x18\x48\x8B", 0xCC, 6, (PVOID)&pData->ExRemoveTable)))
-                        pData->ExRemoveTable -= 0x5C;
-                    break;
-                }
-                else if (verInfo.dwBuildNumber == 14393)
-                {
+				if (verInfo.dwBuildNumber == 10586)
+				{
+					pData->KExecOpt         = 0x1BF;
+					pData->Protection       = 0x6B2;
+					pData->ObjTable         = 0x418;
+					pData->VadRoot          = 0x610;
+					pData->NtCreateThdIndex = 0xB4;
+					pData->NtTermThdIndex   = 0x53;
+					pData->PrevMode         = 0x232;
+					pData->ExitStatus       = 0x6E0;
+					pData->MiAllocPage      = 0;
+					if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8D\x7D\x18\x48\x8B", 0xCC, 6, (PVOID)&pData->ExRemoveTable)))
+						pData->ExRemoveTable -= 0x5C;
+					break;
+				}
+				else if (verInfo.dwBuildNumber == 14393)
+				{
                     pData->ver              = WINVER_10_AU;
-                    pData->KExecOpt         = 0x1BF;
-                    pData->Protection       = 0x6C2;
-                    pData->EProcessFlags2   = 0x300;
-                    pData->ObjTable         = 0x418;
-                    pData->VadRoot          = 0x620;
-                    pData->NtCreateThdIndex = 0xB6;
-                    pData->NtTermThdIndex   = 0x53;
-                    pData->PrevMode         = 0x232;
-                    pData->ExitStatus       = 0x6F0;
-                    pData->MiAllocPage      = 0;
-                    if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8D\x7D\x18\x48\x8B", 0xCC, 6, (PVOID)&pData->ExRemoveTable)))
-                        pData->ExRemoveTable -= 0x60;
+					pData->KExecOpt         = 0x1BF;
+					pData->Protection       = 0x6C2;
+					pData->ObjTable         = 0x418;
+					pData->VadRoot          = 0x620;
+					pData->NtCreateThdIndex = 0xB6;
+					pData->NtTermThdIndex   = 0x53;
+					pData->PrevMode         = 0x232;
+					pData->ExitStatus       = 0x6F0;
+					pData->MiAllocPage      = 0;
+					if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8D\x7D\x18\x48\x8B", 0xCC, 6, (PVOID)&pData->ExRemoveTable)))
+						pData->ExRemoveTable -= 0x60;
 
                     status = BBLocatePageTables( pData );
-                    break;
-                }
+					break;
+				}
                 else if (verInfo.dwBuildNumber == 15063)
-                {
+				{
                     pData->ver              = WINVER_10_CU;
-                    pData->KExecOpt         = 0x1BF;
-                    pData->Protection       = 0x6CA;
-                    pData->EProcessFlags2   = 0x300;
-                    pData->ObjTable         = 0x418;
-                    pData->VadRoot          = 0x628;
-                    pData->NtCreateThdIndex = 0xB9;
-                    pData->NtTermThdIndex   = 0x53;
-                    pData->PrevMode         = 0x232;
-                    pData->ExitStatus       = 0x6F8;
-                    pData->MiAllocPage      = 0;
-                    if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8B\x47\x20\x48\x83\xC7\x18", 0xCC, 8, (PVOID)&pData->ExRemoveTable)))
-                        pData->ExRemoveTable -= 0x34;
+					pData->KExecOpt         = 0x0;
+					pData->Protection       = 0x0;
+					pData->ObjTable         = 0x0;
+					pData->VadRoot          = 0x620;
+					pData->NtCreateThdIndex = 0x0;
+					pData->NtTermThdIndex   = 0x0;
+					pData->PrevMode         = 0x0;
+					pData->ExitStatus       = 0x0;
+					pData->MiAllocPage      = 0;
+					if (NT_SUCCESS(BBScanSection("PAGE", (PCUCHAR)"\x48\x8D\x7D\x18\x48\x8B", 0xCC, 6, (PVOID)&pData->ExRemoveTable)))
+						pData->ExRemoveTable -= 0x60;
 
                     status = BBLocatePageTables( pData );
-                    break;
-                }
-                else
-                {
-                    return STATUS_NOT_SUPPORTED;
-                }
+					break;
+				}
+				else
+				{
+					return STATUS_NOT_SUPPORTED;
+				}
             default:
                 break;
         }
@@ -433,11 +429,8 @@ NTSTATUS BBLocatePageTables( IN OUT PDYNAMIC_DATA pData )
             pData->DYN_PDE_BASE = *(PULONG_PTR)(pMiGetPhysicalAddress + 0x49 + 2);
             pData->DYN_PTE_BASE = *(PULONG_PTR)(pMiGetPhysicalAddress + 0x56 + 2);
         }
-
-        DPRINT( "BlackBone: PDE_BASE: %p, PTE_BASE: %p\n", pData->DYN_PDE_BASE, pData->DYN_PTE_BASE );
         return STATUS_SUCCESS;
     }
 
-    DPRINT( "BlackBone: PDE_BASE/PTE_BASE not found \n" );
     return STATUS_NOT_FOUND;
 }

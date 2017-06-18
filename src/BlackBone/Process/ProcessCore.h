@@ -67,8 +67,7 @@ public:
     /// </summary>
     /// <param name="ppeb">Retrieved PEB</param>
     /// <returns>PEB pointer</returns>
-    template<typename T = uintptr_t>
-    BLACKBONE_API inline ptr_t peb( _PEB_T<T>* ppeb = nullptr ) { return _native->getPEB( ppeb ); }
+    BLACKBONE_API inline ptr_t peb( PEB_T* ppeb = nullptr ) { return _native->getPEB( ppeb ); }
 
     /// <summary>
     /// Check if process is a protected process

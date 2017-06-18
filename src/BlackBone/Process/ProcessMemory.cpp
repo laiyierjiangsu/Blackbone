@@ -23,7 +23,7 @@ ProcessMemory::~ProcessMemory()
 /// <param name="desired">Desired base address of new block</param>
 /// <param name="own">false if caller will be responsible for block deallocation</param>
 /// <returns>Memory block. If failed - returned block will be invalid</returns>
-call_result_t<MemBlock> ProcessMemory::Allocate( size_t size, DWORD protection /*= PAGE_EXECUTE_READWRITE*/, ptr_t desired /*= 0*/, bool own /*= true*/ )
+MemBlock ProcessMemory::Allocate( size_t size, DWORD protection /*= PAGE_EXECUTE_READWRITE*/, ptr_t desired /*= 0*/, bool own /*= true*/ )
 {
     return MemBlock::Allocate( *this, size, desired, protection, own );
 }
@@ -82,8 +82,11 @@ NTSTATUS ProcessMemory::Protect( ptr_t pAddr, size_t size, DWORD flProtect, DWOR
 NTSTATUS ProcessMemory::Read( ptr_t dwAddress, size_t dwSize, PVOID pResult, bool handleHoles /*= false*/ )
 {
     DWORD64 dwRead = 0;
+
     if (dwAddress == 0)
-        return STATUS_INVALID_ADDRESS;
+        return LastNtStatus( STATUS_INVALID_ADDRESS );
+
+    LastNtStatus( STATUS_SUCCESS );
 
     // Simple read
     if (!handleHoles)
@@ -106,15 +109,13 @@ NTSTATUS ProcessMemory::Read( ptr_t dwAddress, size_t dwSize, PVOID pResult, boo
 
             uint64_t region_ptr = memptr - dwAddress;
 
-            auto status = _core.native()->ReadProcessMemoryT(
-                mbi.BaseAddress,
+            if (_core.native()->ReadProcessMemoryT( mbi.BaseAddress,
                 reinterpret_cast<uint8_t*>(pResult) + region_ptr,
                 static_cast<size_t>(mbi.RegionSize),
-                &dwRead
-            );
-
-            if (!NT_SUCCESS( status ))
-                return status;
+                &dwRead ) != STATUS_SUCCESS)
+            {
+                return LastNtStatus();
+            }
         }
     }
 
@@ -139,11 +140,11 @@ NTSTATUS ProcessMemory::Read( std::vector<ptr_t>&& adrList, size_t dwSize, PVOID
     if(adrList.size() == 1)
         return Read( adrList.front(), dwSize, pResult, handleHoles );
 
-    bool wow64 = _process->barrier().targetWow64;
-    ptr_t ptr = wow64 ? Read<uint32_t>( adrList[0] ).result( 0 ) : Read<ptr_t>( adrList[0] ).result( 0 );
+    bool wow64 = _core.native()->GetWow64Barrier().targetWow64;
+    ptr_t ptr = wow64 ? Read<uint32_t>( adrList[0] ) : Read<ptr_t>( adrList[0] );
 
     for (size_t i = 1; i < adrList.size() - 1; i++)
-        ptr = wow64 ? Read<uint32_t>( ptr + adrList[i] ).result( 0 ) : Read<ptr_t>( ptr + adrList[i] ).result( 0 );
+        ptr = wow64 ? Read<uint32_t>( ptr + adrList[i] ) : Read<ptr_t>( ptr + adrList[i] );
 
     return Read( ptr + adrList.back(), dwSize, pResult, handleHoles );
 }
@@ -174,11 +175,11 @@ NTSTATUS ProcessMemory::Write( std::vector<ptr_t>&& adrList, size_t dwSize, cons
     if (adrList.size() == 1)
         return Write( adrList.front(), dwSize, pData );
 
-    bool wow64 = _process->barrier().targetWow64;
-    ptr_t ptr = wow64 ? Read<uint32_t>( adrList[0] ).result( 0 ) : Read<ptr_t>( adrList[0] ).result( 0 );
+    bool wow64 = _core.native()->GetWow64Barrier().targetWow64;
+    ptr_t ptr = wow64 ? Read<uint32_t>( adrList[0] ) : Read<ptr_t>( adrList[0] );
 
     for (size_t i = 1; i < adrList.size() - 1; i++)
-        ptr = wow64 ? Read<uint32_t>( ptr + adrList[i] ).result( 0 ) : Read<ptr_t>( ptr + adrList[i] ).result( 0 );
+        ptr = wow64 ? Read<uint32_t>( ptr + adrList[i] ) : Read<ptr_t>( ptr + adrList[i] );
 
     return Write( ptr + adrList.back(), dwSize, pData );
 }
@@ -186,11 +187,12 @@ NTSTATUS ProcessMemory::Write( std::vector<ptr_t>&& adrList, size_t dwSize, cons
 /// <summary>
 /// Enumerate valid memory regions
 /// </summary>
+/// <param name="results">Found regions</param>
 /// <param name="includeFree">If true - non-allocated regions will be included in list</param>
-/// <returns>Found regions</returns>
-std::vector<MEMORY_BASIC_INFORMATION64> ProcessMemory::EnumRegions( bool includeFree /*= false*/ )
+/// <returns>Number of regions found</returns>
+size_t ProcessMemory::EnumRegions( std::list<MEMORY_BASIC_INFORMATION64>& results, bool includeFree /*= false*/ )
 {
-    return _core.native()->EnumRegions( includeFree );
+    return _core.native()->EnumRegions( results, includeFree );
 }
 
 }

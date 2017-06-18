@@ -134,7 +134,7 @@ public:
                 return _ctx.R9;
 
             default:
-                return _memory.Read<DWORD64>( _ctx.Rsp + 0x30 + (index - 4) * _wordSize ).result( 0 );
+                return _memory.Read<DWORD64>( _ctx.Rsp + 0x30 + (index - 4 ) * _wordSize );
             }
         }
         else
@@ -206,7 +206,7 @@ public:
         }
 
         if (pteb)
-            return _memory.Read<DWORD>( pteb + offset ).result( 0xFFFFFFFF );
+            return _memory.Read<DWORD>( pteb + offset );
 
         return 0xFFFFFFFF;
     }
@@ -231,10 +231,10 @@ public:
             offset = FIELD_OFFSET( _TEB32, LastErrorValue );
         }
 
-        if (!pteb)
-            return 0xFFFFFFFF;
+        if (pteb)
+            return _memory.Write( pteb + offset, newError );
 
-        return _memory.Write( pteb + offset, newError );
+        return 0xFFFFFFFF;
     }
 
 
@@ -245,10 +245,11 @@ public:
     BLACKBONE_API ptr_t getUserContext()
     {
         auto pteb = _thd.teb( (_TEB64*)nullptr );
-        if (!pteb)
-            return 0;
-            
-        return _memory.Read<ptr_t>( pteb + FIELD_OFFSET( _NT_TIB_T<DWORD64>, ArbitraryUserPointer ) ).result( 0 );
+
+        if (pteb)
+            return _memory.Read<ptr_t>( pteb + FIELD_OFFSET( _NT_TIB_T<DWORD64>, ArbitraryUserPointer ) );
+
+        return 0;
     }
 
     /// <summary>
